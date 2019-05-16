@@ -1,0 +1,802 @@
+---
+title: "2019 ‘Eggs for free'"
+author: "Atsushi Miyashita"
+date: '2019-03-10'
+output: 
+  html_document:
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+setwd("~/Google Drive/GitHub/2019-PLOSONE/")
+load("Datafile.RData") 
+library(knitr)
+library(beeswarm)
+library(colormap)
+library(dplyr)
+library(randomForest)
+library(dichromat)
+library(lme4)
+library(lmerTest)
+library(mcmc)
+library(MCMCglmm)
+library(MASS) 
+library(survival)
+d.sum <- d.sum[!is.na(d.sum$ID),]
+```
+
+# Survival
+```{r}
+d<-d.surv[!is.na(d.surv$surv), ]    # extract rows that contain survival events, and
+d<-d[!is.na(d$Group.Number),]       # exclude rows lacking Group Number 
+d<-d[is.element(d$Group.Number, c(1:8)),]  # Group number 1 to 8
+d$Group.Number <- as.factor(d$Group.Number)
+d <- d[!( (d$Day ==12 & d$Status=="C") | (d$Day==22 & d$Status=="C") ),]
+length(unique(d$ID)) # Starting with 240 crickets,
+d <- d[!is.element(d$ID, IDs.unmated),]; length(unique(d$ID)) # 8 crickets did not mate
+d <- d[!is.element(d$ID,EggIncompIDs) &
+         d$Status !="E",]; length(unique(d$ID)) # 15 cricket with incomplete egg-laying and 3 cricket escaped
+d <- d[ !(d$Day <36 & d$Status=="C"),]; length(unique(d$ID)) # 4 crickets were removed 
+
+### 210 crickets are included in the survival analysis ###
+
+nrow(d[d$Day==36 & d$Status=="C",]) ## 166 cricket censored on day 36 with complete dataset
+nrow(d[d$Status=="D",]) ## 44 died
+nrow(d[d$Day>30 & d$Status=="D",]) ## 27 died after day 30. (day 28, 193/210)
+nrow(d[d$Day>22 & d$Status=="D",]) ## 41 died after day 22. (day 22, 207/210)
+nrow(d[d$Day>12 & d$Status=="D",]) ## 44 died after day 12. (day 12, 210/210)
+
+# IDs of crickets with complete dataset
+IDs166 <- d[d$Day==36 & d$Status=="C",]$ID
+table(d.sum[is.element(d.sum$ID, IDs166),]$MuscleCol)
+
+# Survival Analysis
+res<-survfit(Surv(Day,surv)~1, data=d) ; res ; summary(res, consored=T)
+plot(res, col=c("black"), xlab="Age (day)", ylab="Survival",
+     main="Overall survival",mark.time = T, lwd=3,conf.int = F)
+text(x=5, y=0.9, paste ("n=", length(unique(d$ID)))) # 217 females across 8 groups
+res.bygroup<-survfit(Surv(Day, surv)~Group.Number, data=d)
+cols<-c("#ff2800dd","#faf500dd","#35a86bdd","#0041ffdd","#66ccffdd","#ff9ca0dd","#990079dd","#663333dd", "black")
+plot(res.bygroup, col=cols, main="Survival of adult females", lwd=4)
+labels<-c("Control (E)","Control (L)", "IC (E)", "IC (L)", "Sham (E)",
+          "Sham (L)", "NTC", "NTC (ad lib)")
+legend("bottomleft", legend = labels, col = cols, lty=1, lwd=3)
+survdiff(Surv(Day, surv)~Group.Number, data=d)
+plot(res.bygroup, col=cols, main="Survival of adult females", lwd=10, ylim=c(0.6, 1), xlim= c(10, 37))
+survdiff(Surv(Day, surv)~Group.Number, data=d[is.element(d$Group.Number, 1:7),])
+```
+
+
+<!-- # Power analysis -->
+<!-- ```{r} -->
+<!-- mean(d.sum[is.element(d.sum$ID, IDs166) & d.sum$Group.Number==7,]$EggsTotal, na.rm=T) -->
+<!-- sd(d.sum[is.element(d.sum$ID, IDs166) & d.sum$Group.Number==7,]$EggsTotal , na.rm=T) -->
+
+<!-- library(pwr) -->
+<!-- pwr.anova.test(k=8,n=166,f=.3,sig.level=0.05) -->
+<!-- p.out <- pwr.anova.test(k=8,f=.3,sig.level = 0.05,power = 0.80) -->
+<!-- plot(p.out) -->
+<!-- p.out <- pwr.anova.test(k=7,f=.05,sig.level = 0.05,power = 0.80) -->
+<!-- plot(p.out) -->
+<!-- p.out <- pwr.anova.test(k=7,f=.08,sig.level = 0.05,power = 0.80) -->
+<!-- plot(p.out) -->
+<!-- p.out <- pwr.anova.test(k=7,f=.32,sig.level = 0.05,power = 0.80) -->
+<!-- plot(p.out) -->
+
+
+<!-- pwr.anova.test(k=3,n=63,f=.3,sig.level=0.05) -->
+<!-- p.out <- pwr.anova.test(k=3,f=.5,sig.level = 0.05,power = 0.80) -->
+<!-- plot(p.out) -->
+<!-- ``` -->
+
+
+# Univariate
+## Ad-lib vs. Intermittent
+```{r}
+x<- d.sum[is.element(d.sum$Group.Number, c(7,8)) & 
+             d.sum$EventType=="C" &
+            d.sum$EventDay==36 &
+            d.sum$IsMated &
+            d.sum$IsEggComplete,]
+x[x$Group.Number==8, ]$Group.Number <- 0
+table(x$Group.Number)
+summary(x)
+
+hist(x$EggsTotal)
+shapiro.test(x$EggsTotal)
+res <- wilcox.test(x[x$Group.Number==0,]$EggsTotal, x[x$Group.Number==7,]$EggsTotal, 
+                   paired=F, exact=T);print(res) # Mann Whitney U test
+
+
+res <- wilcox.test(x[x$Group.Number==0,]$EggsLaid, x[x$Group.Number==7,]$EggsLaid, 
+                   paired=F, exact=T);print(res) # Mann Whitney U test
+
+res <- wilcox.test(x[x$Group.Number==0,]$EggsInLO, x[x$Group.Number==7,]$EggsInLO, 
+                   paired=F, exact=T);print(res) # Mann Whitney U test
+
+beeswarm(EggsTotal ~ Group.Number, data=x, pch=19, col=1, las=1, ylim=c(0, 1500))
+par(mfrow=c(1,1))
+boxplot(EggsTotal ~ Group.Number, data=x, pch=19, las=1, ylim=c(0, 1100), outline=F,
+        ylab= "Total Produced Eggs (laid + not laid)")
+boxplot(EggsLaid ~ Group.Number, data=x, pch=19, las=1, ylim=c(0, 1100), outline=F,
+        ylab= "Number of Laid Eggs")
+boxplot(EggsInLO ~ Group.Number, data=x, pch=19, las=1, ylim=c(0, 600), outline=F,
+        ylab= "Number of Eggs in LO")
+                
+res1 <- glm (EggsTotal ~ as.factor(Group.Number), data = x, family = poisson(link="log"))
+res2 <- glm (EggsTotal ~ 1                      , data = x, family = poisson(link="log"))
+AIC(res1);AIC(res2); AIC(res1)-AIC(res2)
+summary(res1)
+table(x$Group.Number)
+
+beeswarm(EggsLaid ~ Group.Number, data=x, pch=19, col=1, las=1, ylim=c(0, 1500))
+res1 <- glm (EggsLaid+1 ~ as.factor(Group.Number), data = x, family = poisson(link="log"))
+res2 <- glm (EggsLaid+1 ~ 1                      , data = x, family = poisson(link="log"))
+AIC(res1);AIC(res2); AIC(res1)-AIC(res2)
+summary(res1)
+# res3 <- glm (EggsLaid+1 ~ as.factor(Group.Number), data = x, family = poisson(link="log"), offset=log(EggsTotal))
+# res4 <- glm (EggsLaid+1 ~ 1                      , data = x, family = poisson(link="log"), offset=log(EggsTotal))
+# AIC(res3);AIC(res4); AIC(res3)-AIC(res4)
+# summary(res3)  
+  
+beeswarm(EggsInLO ~ Group.Number, data=x, pch=19, col=1, las=1, ylim=c(0, 1500))
+res1 <- glm (EggsInLO ~ as.factor(Group.Number), data = x, family = poisson(link="log"))
+res2 <- glm (EggsInLO ~ 1                      , data = x, family = poisson(link="log"))
+AIC(res1);AIC(res2); AIC(res1)-AIC(res2)
+summary(res1)
+# res3 <- glm (EggsInLO+1 ~ as.factor(Group.Number), data = x, family = poisson(link="log"), offset=log(EggsTotal))
+# res4 <- glm (EggsInLO+1 ~ 1                      , data = x, family = poisson(link="log"), offset=log(EggsTotal))
+# AIC(res3);AIC(res4); AIC(res3)-AIC(res4)
+# summary(res3)  
+  
+chisq.test(print(table(x$MuscleCol, x$Group.Number)))
+fisher.test(print(table(x$MuscleCol, x$Group.Number)), simulate.p.value = T)
+```
+
+## Reproductive output vs. MuscleCol
+```{r}
+x <-d.sum
+x <- x[x$IsEggComplete & x$IsMated & x$EventDay==36 & x$EventType=="C" &
+         is.element(x$Group.Number, 1:7),] 
+nrow(x)
+table(x$MuscleCol)
+par(mfrow = c(3,3),
+    oma = c(1,1,1,1) + 0.1,
+    mar = c(6,3,0,.5) + 0.1,
+    mgp=c(2,.6,0),adj=.5,
+    bg="transparent", new=F)
+fisher.test(print(table(x$MuscleCol, x$Group.Number)))
+chisq.test(print(table(x$MuscleCol, x$Group.Number)))
+sum(table(x$MuscleCol, x$Group.Number))
+par(mfrow=c(1,1))
+boxplot(EggsTotal ~ MuscleCol, data=x,las=1, outline=F,
+        xlab='Flight Muscle (day 36)',ylab="Number of Total Produced Eggs", ylim=c(0, 500))
+wilcox.test(EggsTotal ~ MuscleCol, data=x)
+
+beeswarm(EggsTotal ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(0, 500))
+hist(x$EggsTotal)
+shapiro.test(x$EggsTotal)
+res1 <- glm ( EggsTotal ~ MuscleCol, data =x, family=poisson(link="log"))
+res2 <- glm ( EggsTotal ~ 1        , data =x, family=poisson(link="log"))
+AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+
+beeswarm(EggsLaid ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(0, 500))
+res1 <- glm ( EggsLaid ~ MuscleCol, data =x, family=poisson(link="log"), offset=log(EggsTotal+1))
+res2 <- glm ( EggsLaid ~ 1        , data =x, family=poisson(link="log"), offset=log(EggsTotal+1))
+AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+
+beeswarm(EggsInLO ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19,las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(0, 500))
+res1 <- glm ( EggsInLO ~ MuscleCol, data =x, family=poisson(link="log"), offset=log(EggsTotal+1))
+res2 <- glm ( EggsInLO ~ 1        , data =x, family=poisson(link="log"), offset=log(EggsTotal+1))
+AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+  
+  
+beeswarm(SMI01 ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)',ylim=c(250, 600))
+  summary(lm(SMI01~MuscleCol, data=x))
+  t.test(x[x$MuscleCol=="Pink",]$SMI01,x[x$MuscleCol=="White",]$SMI01)
+  xx<- x[!is.na(x$MuscleCol) & !is.na(x$SMI01),]
+  means <-tapply(xx$SMI01, xx$MuscleCol, mean, na.rm=T)
+    for (i in 1:2){segments(i-.3, means[i], i+.3, means[i], lwd=4, col=1)}
+  table(xx$MuscleCol); rm(xx, means)
+  
+beeswarm(Mass.Initial ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(200, 750))
+  summary(lm(Mass.Initial~MuscleCol, data=x))
+  xx<- x[!is.na(x$MuscleCol) & !is.na(x$Mass.Initial),]
+  means <-tapply(xx$Mass.Initial, xx$MuscleCol, mean, na.rm=T)
+    for (i in 1:2){segments(i-.3, means[i], i+.3, means[i], lwd=4, col=1)}
+  table(xx$MuscleCol); rm(xx, means)
+  
+beeswarm(SMI36 ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)',ylim=c(250, 600))
+  t.test(x[x$MuscleCol=="Pink",]$SMI36,x[x$MuscleCol=="White",]$SMI36)
+  xx<- x[!is.na(x$MuscleCol) & !is.na(x$SMI36),]
+  means <-tapply(xx$SMI36, xx$MuscleCol, mean, na.rm=T)
+    for (i in 1:2){segments(i-.3, means[i], i+.3, means[i], lwd=4, col=1)}
+  table(xx$MuscleCol); rm(xx, means)
+
+beeswarm(Mass.Terminal ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(200, 750))
+  summary(lm(Mass.Terminal~MuscleCol, data=x))
+  xx<- x[!is.na(x$MuscleCol) & !is.na(x$Mass.Terminal),]
+  means <-tapply(xx$Mass.Terminal, xx$MuscleCol, mean, na.rm=T)
+    for (i in 1:2){segments(i-.3, means[i], i+.3, means[i], lwd=4, col=1)}
+  table(xx$MuscleCol); rm(xx, means)
+  
+par(mfrow=c(1,1), new=F, bg="white")  
+beeswarm(SMI01 ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(250, 600))
+  summary(lm(SMI01 ~ as.factor(MuscleCol), data=x))
+beeswarm(SMI36 ~ MuscleCol, data=x,col=c("magenta", "grey"), pch=19, las=1, spacing=.6, xlab='Flight Muscle (day 36)', ylim=c(250, 600))
+  summary(lm(SMI36 ~ as.factor(MuscleCol), data=x))
+  
+```
+
+
+# Generalized Linear Model
+## Reproductive output vs. treatments
+```{r}
+x <- d.sum[is.element(d.sum$Group.Number, c(1,2,3,4,5,6,7)),]
+x$Sep.Date <-format(as.Date(x$Sep.Date), "%Y-%m") 
+x <- x[x$IsMated & x$IsEggComplete & x$EventDay==36 & x$EventType=="C",]
+x7 <-nrow(x[x$Group.Number == 7, ]);x7
+x[x$Group.Number==7,]$Group.Number <- rep(0,x7)
+nrow(x)
+par(mfrow = c(2,2),
+    oma = c(1,1,1,1) + 0.1,
+    mar = c(3,3,1,.5) + 0.1,
+    mgp=c(1.8,.6,0),adj=.5,
+    bg="white")
+table (x[!is.na(x$EggsInLO),]$Group.Number)
+
+mean (x$Neggs22 - x$Neggs12)
+mean (x$Neggs36 - x$Neggs22)
+wilcox.test( (x$Neggs22 - x$Neggs12)/10,
+             (x$Neggs36 - x$Neggs22)/14)
+wilcox.test( (x$Neggs22 - x$Neggs12)/10,
+             (x$Neggs36 - x$Neggs22)/14, paired = T)
+
+
+## N. of Eggs 12-36 - Treatment   
+  hist(x$Neggs36-x$Neggs12)
+  shapiro.test(x$Neggs36-x$Neggs12);shapiro.test(log10(x$Neggs36-x$Neggs12+1))
+  mean(x$Neggs36 - x$Neggs12)
+   var(x$Neggs36 - x$Neggs12)
+res4b <- glm.nb((Neggs36 - Neggs12) ~  as.factor(Group.Number),link ="log",
+             data=x[is.element(x$Group.Number, c(1,3,5,0)),])
+res5b <- glm.nb((Neggs36 - Neggs12) ~  1                      ,link ="log",
+             data=x[is.element(x$Group.Number, c(1,3,5,0)),])
+AIC(res4b);AIC(res5b); AIC(res4b)-AIC(res5b)
+summary(res4b)
+summary(res5b)
+### Power Analysis
+posi.rate <- c()
+sampsize.range <- seq(from = 20, to = 1000, by = 40)
+for (sampsize in sampsize.range){
+result <-c()
+  for (itr in 1:200){
+    d1<- rnbinom(n=sampsize, size = 0.6321, mu = exp(4.62497))
+    d2<- rnbinom(n=sampsize, size = 0.6321, mu = exp(4.62497-0.04317))
+    simd <- cbind (y = c(d1, d2), x =c(rep(1, sampsize), rep(2, sampsize))); simd <- as.data.frame(simd)
+    res <-  glm.nb(y ~ as.factor(x), data =simd, link="log")
+    pval <- coef(summary(res))[2,4];pval
+    result <- c(result, pval)
+    rm (pval, d1, d2, simd, res)
+  }
+posi.rate <- c(posi.rate, sum(result < 0.05)/length(result)); posi.rate
+}
+par(mfrow=c(1,1))
+plot (x= sampsize.range, y = posi.rate, type="p",pch=19, ylim=c(0, 1), ylab="Power", xlab="Sample size")
+segments(0, 0.8, 500, 0.8, lty=3)
+
+# beeswarm(Neggs36 - Neggs12 ~ as.factor(Group.Number),
+#            spacing=.75, data=x[is.element(x$Group.Number, c(1,3,5,0)),],
+#            col="#000000aa",
+#            pch=19, las=1, ylim= c(0, 500))
+#   xx<-x[is.element(x$Group.Number, c(1,3,5,0)) & !is.na(x$Neggs36-x$Neggs12),]
+#   means<-tapply(xx$Neggs36-xx$Neggs12, INDEX = xx$Group.Number, FUN=mean, na.rm=T);means
+#     for(i in 1:4){segments(i-.2,means[i],i+.2, means[i], lwd = 3, col = "red")}
+boxplot(Neggs36 - Neggs12 ~ as.factor(Group.Number),
+        data=x[is.element(x$Group.Number, c(1,3,5,0)),],
+           pch=19, las=1, ylim= c(0, 400), outline=F, 
+        ylab="# Eggs laid between d12 and d36")
+
+table(xx$Group); rm(xx)
+meds<-tapply(xx$Neggs36-xx$Neggs12, INDEX = xx$Group.Number, FUN=median, na.rm=T);meds
+
+  
+## N. of Eggs 22-36 - Treatment 
+  hist(x$Neggs36-x$Neggs22); hist(x$Neggs36-x$Neggs22, breaks=20) 
+  shapiro.test(log10(x$Neggs36-x$Neggs22+1))  
+  mean(x$Neggs36 - x$Neggs22)
+   var(x$Neggs36 - x$Neggs22)
+res4b <- glm.nb((Neggs36 - Neggs22) ~  as.factor(Group.Number),link ="log",
+             data=x[is.element(x$Group.Number, c(2,4,6,0)),])
+res5b <- glm.nb((Neggs36 - Neggs22) ~  1                      ,link ="log",
+             data=x[is.element(x$Group.Number, c(2,4,6,0)),])
+AIC(res4b);AIC(res5b); AIC(res4b)-AIC(res5b)
+summary(res4b)
+### Power Analysis
+posi.rate <- c()
+sampsize.range <- seq(from = 10, to = 3000, by = 100)
+counter <- 1
+for (sampsize in sampsize.range){
+result <-c()
+  for (itr in 1:200){
+    d1<- rnbinom(n=sampsize, size = 0.5187, mu = exp(4.2966))
+    d2<- rnbinom(n=sampsize, size = 0.5187, mu = exp(4.2966-0.1302))
+    simd <- cbind (y = c(d1, d2), x =c(rep(1, sampsize), rep(2, sampsize))); simd <- as.data.frame(simd)
+    res <-  glm.nb(y ~ as.factor(x), data =simd, link="log")
+    pval <- coef(summary(res))[2,4];pval
+    result <- c(result, pval)
+    rm (pval, d1, d2, simd, res)
+  }
+pr <-sum(result < 0.05)/length(result)
+posi.rate <- c(posi.rate, pr); posi.rate
+print(paste ("step", counter, "of", length(sampsize.range), ": posirate =", pr )); counter <- counter +1
+rm(result, pr)
+}
+par(mfrow=c(1,1))
+plot (x= sampsize.range, y = posi.rate, type="p",pch=19, ylim=c(0, 1), ylab="Power", xlab="Sample size")
+segments(0, 0.8, 3000, 0.8, lty=3)
+
+# beeswarm(Neggs36 - Neggs22 ~ as.factor(Group.Number),
+#            spacing=.75,
+#            data=x[is.element(x$Group.Number, c(2,4,6,0)),], col="#000000aa",
+#            pch=19,
+#            las=1, ylim=c(0, 500))   
+#   xx<-x[is.element(x$Group.Number, c(2,4,6,0)) & !is.na(x$Neggs36-x$Neggs22),]
+#   means<-tapply(xx$Neggs36-xx$Neggs22, INDEX = xx$Group.Number, FUN=mean, na.rm=T);means
+#     for(i in 1:4){segments(i-.2,means[i],i+.2, means[i], lwd = 3, col = "red")}
+boxplot(Neggs36 - Neggs22 ~ as.factor(Group.Number),
+        data=x[is.element(x$Group.Number, c(2,4,6,0)),],
+           pch=19, las=1, ylim= c(0, 250), outline=F, 
+        ylab="# Eggs laid between d22 and d36")
+
+table(xx$Group)
+
+
+## EggsInLO - Treatment 
+hist(x$EggsInLO)
+shapiro.test(x$EggsInLO)
+mean(x$EggsInLO, na.rm=T)
+ var(x$EggsInLO, na.rm=T)
+res4b <- glm.nb(EggsInLO  ~  as.factor(Group.Number), 
+             data=x[is.element(x$Group.Number, c(0:6)),])
+res5b <- glm.nb(EggsInLO  ~  1                      ,
+             data=x[is.element(x$Group.Number, c(0:6)),])
+AIC(res4b);AIC(res5b); AIC(res4b)-AIC(res5b)
+summary(res4b)
+plot(res4b)
+# beeswarm(EggsInLO ~ as.factor(Group.Number), spacing=.75,
+#            data=x[is.element(x$Group.Number, c(0:6)),], col="#000000aa", pch=19,
+#            las=1, ylim=c(0, 500)) 
+#   xx<-x[is.element(x$Group.Number, c(0:6)) & !is.na(x$EggsInLO),]
+#   means<-tapply(xx$EggsInLO, INDEX = xx$Group.Number, FUN=mean, na.rm=T);means
+#     for(i in 1:7){segments(i-.2,means[i],i+.2, means[i], lwd = 3, col = "red")}
+#   table(xx$Group); rm(xx)
+boxplot(EggsInLO ~ as.factor(Group.Number),
+        data=x[is.element(x$Group.Number, c(1,3,5,0)),],
+           pch=19, las=1, ylim= c(0, 280), outline=F, 
+        ylab="# Eggs laid between d12 and d36")
+
+boxplot(EggsInLO ~ as.factor(Group.Number),
+        data=x[is.element(x$Group.Number, c(2,4,6,0)),],
+           pch=19, las=1, ylim= c(0, 280), outline=F, 
+        ylab="# Eggs laid between d12 and d36")
+
+
+
+```
+
+
+### Line Chart
+
+```{r}
+d <- d.sum[d.sum$IsMated & d.sum$IsEggComplete & !is.na(d.sum$RVtot) &
+             d.sum$EventDay==36 & d.sum$EventType=="C",
+           c("RV7","RV12","RV15","RV19","RV22","RV25","RV30","RV36","RRV36","ID","Group.Number")]
+d <- round(d, 1)
+d <- d[is.element(d$Group.Number, c(1,2,3,4,5,6,7)),]
+summary(d)
+dd.sum <- d.sum[d.sum$IsMated & d.sum$IsEggComplete & !is.na(d.sum$RVtot) &
+                  d.sum$EventDay==36 & d.sum$EventType=="C" & is.element(d.sum$Group.Number,1:7),]
+nrow(d); nrow(dd.sum) ## 136 samples, complete dataset, survived for 36 days, 
+
+## Cumulative
+par(mfrow=c(3,3))
+for (grn in 1:7){
+  counter <- 0
+  plot(x=NULL, type="n", xlim=c(0, 40), ylim = c(0,4),
+         xlab='Day', ylab='log10(RV+1)', las=1,
+     main = paste("Reproductive output (Group ", grn,")", sep="") )
+  for (i in 1:nrow(d)){
+    x <- d.eggperday[d.eggperday$ID==d[i,]$ID & d.eggperday$Gr.N==grn,]
+    if(nrow(x)==0){next}
+    xx <-c(0)
+    yy <-c(0)
+    counter <- counter +1
+    for (k in 1:nrow(x)){
+      xx <- c(xx, x[k,]$Day.mean)
+      yy <- c(yy, sum(x[1:k, ]$RV, na.rm=T))
+    }
+    par(new=T)
+    plot(x=xx, y=log10(yy+1), type="l", xlim=c(0, 40), ylim = c(0, 3), axes = F,
+         xlab="", ylab="", col=1)
+    rm(xx, yy)
+  }
+
+  xxx <- d[d$Group.Number==grn,]
+  par(new=T)
+  plot(x=c(3.5,9.5,13.5,17,20.5,23.5,27.5,33),y=apply(log10(xxx[,1:8]+1), 2, mean, na.rm=T), 
+       pch= 19, col="red",xlim=c(0, 40), ylim=c(0,3),axes=F,xlab="", ylab="")
+  par(new=T)
+  plot(x=c(3.5,9.5,13.5,17,20.5,23.5,27.5,33),y=apply(log10(xxx[,1:8]+1), 2, mean, na.rm=T), 
+       pch= 19, col="red",xlim=c(0, 40), ylim=c(0,3),axes=F,xlab="", ylab="", type="l")
+  par(new=F)
+  legend("topleft", legend=paste("n=",counter,sep=""), bty="n", text.col = 1)
+}
+
+## Non-Cumulative
+par(mfrow=c(1,1))
+for (grn in 1:7){
+  counter <- 0
+  plot(x=NULL, type="n", xlim=c(0, 40), ylim = c(0,4),
+         xlab='Day', ylab='log10(RVnc+1)', 
+     main = paste("Reproductive output (Group ", grn,")", sep="") )
+  for (i in 1:nrow(d)){
+    x <- d.eggperday[d.eggperday$ID==d[i,]$ID & d.eggperday$Gr.N==grn,]
+    if(nrow(x)==0){next}
+    xx <-c(0)
+    yy <-c(0)
+    counter <- counter +1
+    for (k in 1:nrow(x)){
+      xx <- c(xx, x[k,]$Day.mean)
+      yy <- c(yy, x[k, ]$RV)
+    }
+    par(new=T)
+    plot(x=xx, y=log10(yy+1), type="l", xlim=c(0, 40), ylim = c(0, 3), axes = F,
+         xlab="", ylab="", col=1)
+    rm(xx, yy)
+  }
+legend("topleft", legend=paste("n=",counter,sep=""), bty="n", text.col = 1)
+}
+
+```
+
+
+## immune factor vs treatments
+```{r}
+x <- d.sum[is.element(d.sum$Group.Number, c(1,2,3,4,5,6,7)),]
+x$Sep.Date <-format(as.Date(x$Sep.Date), "%Y-%m") 
+x <- x[x$IsMated & x$EventDay==36 & x$EventType=="C",]
+x[x$Group.Number==7,]$Group.Number <- rep(0,x7)
+sum(print(table(x$Group.Number)))
+
+par(mfcol = c(4,3),
+    oma = c(1,1,1,1) + 0.1,
+    mar = c(3,3,1,.5) + 0.1,
+    mgp=c(1.8,.6,0),adj=.5,
+    bg="transparent")
+
+# Sample sizes
+table(x[!is.na(x$PO12),]$Group.Number)
+table(x[!is.na(x$GSH12),]$Group.Number)
+table(x[!is.na(x$lyso12),]$Group.Number)
+table(x[!is.na(x$ProtLevel12),]$Group.Number)
+table(x[!is.na(x$PO22),]$Group.Number)
+table(x[!is.na(x$GSH22),]$Group.Number)
+table(x[!is.na(x$lyso22),]$Group.Number)
+table(x[!is.na(x$ProtLevel22),]$Group.Number)
+table(x[!is.na(x$PO36),]$Group.Number)
+table(x[!is.na(x$GSH36),]$Group.Number)
+table(x[!is.na(x$lyso36),]$Group.Number)
+table(x[!is.na(x$ProtLevel36),]$Group.Number)
+
+# BOXPLOTS
+boxplot(PO12~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(1,3,5)),],las=1,outline=F)
+boxplot(GSH12~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(1,3,5)),],las=1,outline=F)
+boxplot(lyso12~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(1,3,5)),],las=1,outline=F)
+boxplot(ProtLevel12~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(1,3,5)),],las=1,outline=F)
+boxplot(PO22~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(2,4,6)),],las=1,outline=F)
+boxplot(GSH22~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(2,4,6)),],las=1,outline=F)
+boxplot(lyso22~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(2,4,6)),],las=1,outline=F)
+boxplot(ProtLevel22~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(2,4,6)),],las=1,outline=F)
+boxplot(PO36~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(0:6)),],las=1,outline=F)
+boxplot(GSH36~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(0:6)),],las=1,outline=F)
+boxplot(lyso36~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(0:6)),],las=1,outline=F)
+boxplot(ProtLevel36~as.factor(Group.Number),
+         data=x[is.element(x$Group.Number,c(0:6)),],las=1,outline=F)
+
+
+x <- d.sum[is.element(d.sum$Group.Number, c(1,2,3,4,5,6,7)),]
+x$Sep.Date <-format(as.Date(x$Sep.Date), "%Y-%m") 
+x <- x[x$IsMated & x$EventDay==36 & x$EventType=="C" & x$IsEggComplete,]
+x[x$Group.Number==7,]$Group.Number <- rep(0,x7)
+
+
+#PO12
+hist(x$PO12)
+shapiro.test(x$PO12)
+shapiro.test(log10(x$PO12+1))
+res4 <- glmer( PO12/mean(x$PO12,na.rm=T)+.11 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( PO12/mean(x$PO12,na.rm=T)+.11 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+summary(res4)
+
+#GSH12
+hist(x$GSH12)
+shapiro.test(x$GSH12)
+res4 <- glmer( GSH12+.1 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family=gaussian(link="log"))
+res5 <- glmer( GSH12+.1 ~                         + (1| Sep.Date) ,data=x, family=gaussian(link="log"))
+AIC(res4);AIC(res5); AIC(res4)- AIC(res5)
+summary(res4)
+
+#lyso12
+hist(x$lyso12)
+shapiro.test(x$lyso12)
+res4 <- glmer( lyso12+.5 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( lyso12+.5 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#ProtLevel12
+hist(x$ProtLevel12)
+shapiro.test(x$ProtLevel12)
+res4 <- glmer(ProtLevel12/mean(ProtLevel12,na.rm=T)+.1 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family=Gamma(link="log"))
+res5 <- glmer(ProtLevel12/mean(ProtLevel12,na.rm=T)+.1 ~                           (1| Sep.Date) ,data=x, family=Gamma(link="log"))
+AIC(res4);AIC(res5); AIC(res4)-AIC(res5)
+summary(res4)
+
+#PO22
+hist(x$PO22)
+shapiro.test(x$PO22)
+shapiro.test(log10(x$PO22+1))
+res4 <- glmer( PO22+.1 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( PO22+.1 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#GSH22
+hist(x$GSH22)
+shapiro.test(x$GSH22)
+res1<-glmer(GSH22+.1 ~ as.factor(Group.Number) + (1| Sep.Date), data=x, family=Gamma(link="log"))
+res2<-glmer(GSH22+.1 ~                         + (1| Sep.Date) ,data=x, family=Gamma(link="log"))
+AIC(res1);AIC(res2)
+
+#lyso22
+hist(x$lyso22)
+shapiro.test(x$lyso22)
+shapiro.test(log10(x$lyso22 +1))
+res4 <- glmer( lyso22/mean(lyso22,na.rm=T)+.4 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( lyso22/mean(lyso22,na.rm=T)+.4 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5); AIC(res4)- AIC(res5)
+summary(res4)
+
+#ProtLevel22
+hist(x$ProtLevel22)
+shapiro.test(x$ProtLevel22)
+shapiro.test(log10(x$ProtLevel22+1))
+res4 <- glmer( ProtLevel22/mean(x$ProtLevel22,na.rm=T)+1 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( ProtLevel22/mean(x$ProtLevel22,na.rm=T)+1 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#PO36
+hist(x$PO36)
+shapiro.test(x$PO36)
+shapiro.test(log10(x$PO36+1))
+res4 <- glmer( PO36/mean(PO36,na.rm=T)+1 ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( PO36/mean(PO36,na.rm=T)+1 ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#GSH36
+hist(x$GSH36)
+shapiro.test(x$GSH36)
+res4 <- glmer( GSH36+2~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( GSH36+2~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#lyso36
+hist(x$lyso36)
+shapiro.test(x$lyso36)
+shapiro.test(log10(x$lyso36+1))
+res4 <- glmer( lyso36/mean(lyso36,na.rm=T)+.5~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( lyso36/mean(lyso36,na.rm=T)+.5~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+#ProtLevel36
+hist(x$ProtLevel36)
+shapiro.test(x$ProtLevel36)
+res4 <- glmer( ProtLevel36/mean(ProtLevel36,na.rm=T) ~ as.factor(Group.Number) + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+res5 <- glmer( ProtLevel36/mean(ProtLevel36,na.rm=T) ~                         + (1| Sep.Date) ,data=x, family= Gamma(link="log"))
+AIC(res4);AIC(res5)
+
+```
+
+```{r}
+```
+
+## immune factor vs age
+```{r}
+par(mfrow = c(2,2),
+    oma = c(1,1,1,1) + 0.1,
+    mar = c(6,3,0,.5) + 0.1,
+    mgp=c(2,.6,0),adj=.5,
+    bg="transparent")
+
+x <- d.sum[is.element(d.sum$Group.Number, c(1,2,7)),]
+x <- cbind(x, Sep.Mon=months.Date(x$Sep.Date))
+x <- x[x$IsMated & x$EventDay==36 & x$EventType=="C",]
+
+x.tab <- cbind(PO= c(x$PO12, x$PO22, x$PO36),
+               GSH= c(x$GSH12, x$GSH22, x$GSH36),
+               lyso= c(x$lyso12, x$lyso22, x$lyso36),
+               ProtLevel = c(x$ ProtLevel12, x$ProtLevel22, x$ProtLevel36),
+               POtoGSH = c(x$PO12toGSH12, x$PO22toGSH22, x$PO36toGSH36),
+               MuscleCol= c(x$MuscleCol, x$MuscleCol, x$MuscleCol),
+               Age=c(rep(12, length(x$PO12)),rep(22, length(x$PO22)),rep(36, length(x$PO36)) ),
+               Group.Number = c(x$Group.Number,x$Group.Number,x$Group.Number),
+               ID = c(x$ID, x$ID, x$ID))
+x.tab <- as.data.frame(x.tab)
+sepd <-format(as.Date(x$Sep.Date), "%Y-%m") 
+x.tab <- cbind(x.tab, Sep.Date=sepd);sepd
+x.tab <- x.tab[  (x.tab$Age==12 & x.tab$Group.Number ==1) |
+                 (x.tab$Age==22 & x.tab$Group.Number ==2) |
+                 (x.tab$Age==36 & x.tab$Group.Number ==7) , ]
+table(x.tab$Group.Number)
+
+par(mfrow=c(2,2))
+
+# PO
+hist(x.tab$PO)
+res1 <- glmer(PO+.3 ~ as.factor(Age)+ (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+res2 <- glmer(PO+.3 ~                 (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+AIC(res1);AIC(res2); AIC(res1)-AIC(res2)
+summary(res1)
+beeswarm(PO ~ as.factor(Age), data =x.tab, 
+         col=1, pch =19, las=1, ylab="log10(PO+1)", spacing =.6)
+rect(0,.1,4,.25, lty=2, col="#00000040")
+text(2,.17, "Detection Limit")
+means <- tapply (x.tab$PO, x.tab$Age, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+pairwise.wilcox.test(x.tab$PO, x.tab$Age, p.adjust.method = "fdr")
+boxplot(PO ~ as.factor(Age), data =x.tab,
+           pch=19, las=1, ylim= c(0, 10), outline=F, 
+        ylab="PO [µg tyrosinase eq./mL]")
+
+# GSH
+hist(x.tab$GSH)
+shapiro.test(x.tab$GSH)
+res1 <- glmer(GSH+5 ~ as.factor(Age)+ (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+res2 <- glmer(GSH+5 ~                 (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+AIC(res1);AIC(res2); AIC(res1)-AIC(res2)
+beeswarm(GSH ~ as.factor(Age), data =x.tab, 
+         col=1, pch =19, las=1, ylab="log10(GSH+1)", spacing =.6)
+rect(0,.8,4 ,1.0, lty=2,  col="#00000040")
+text(2,.9, "Detection Limit")
+means <- tapply (x.tab$GSH, x.tab$Age, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+pairwise.wilcox.test(x.tab$GSH, x.tab$Age, p.adjust.method = "fdr")
+summary(res1)
+boxplot(GSH ~ as.factor(Age), data =x.tab,
+           pch=19, las=1, ylim= c(0, 350), outline=F, 
+        ylab="GSH [µM]")
+
+
+# POtoGSH
+xx.tab <- x.tab[x.tab$GSH>10,]
+hist(xx.tab$POtoGSH)
+res1 <- glmer(POtoGSH+.01 ~ as.factor(Age)+ (1|Sep.Date), data=xx.tab, family=Gamma(link="log"))
+res2 <- glmer(POtoGSH+.01 ~                 (1|Sep.Date), data=xx.tab, family=Gamma(link="log"))
+AIC(res1);AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+summary(res1)
+beeswarm(POtoGSH ~ as.factor(Age), data =xx.tab,
+         col=1, pch =19, las=1, ylab="log10(POtoGSH+1)", spacing=.4)
+means <- tapply (xx.tab$POtoGSH, xx.tab$Age, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+pairwise.wilcox.test(x.tab$POtoGSH, x.tab$Age, p.adjust.method = "fdr")
+
+
+# lyso
+hist(x.tab$lyso)
+res1 <- glmer(lyso+.1 ~ as.factor(Age)+ (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+res2 <- glmer(lyso+.1 ~                 (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+AIC(res1);AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+boxplot(lyso ~ as.factor(Age), data =x.tab,
+           pch=19, las=1, ylim= c(0, 10), outline=F, 
+        ylab="lysozyme-like activity [µg/mL]")
+
+# Protlevel
+hist(x.tab$ProtLevel)
+shapiro.test(x.tab$ProtLevel)
+res1 <- glmer(ProtLevel ~ as.factor(Age)+ (1|Sep.Date), data=x.tab, family=Gamma(link="log")) 
+res2 <- glmer(ProtLevel ~ 1+                 (1|Sep.Date), data=x.tab, family=Gamma(link="log"))
+AIC(res1);AIC(res2); AIC(res1)- AIC(res2)
+summary(res1)
+boxplot(ProtLevel ~ as.factor(Age), data =x.tab,
+           pch=19, las=1, ylim= c(0, 400), outline=F, 
+        ylab="Protein Level [µg/mL]")
+
+```
+
+
+## MuscleCol vs. treatment
+```{r}
+x <- d.sum[is.element(d.sum$Group.Number,c(1:7)),]
+x <- x[x$IsMated & x$IsEggComplete & x$EventDay==36 & x$EventType=="C" , ]
+fisher.test(print(table(x$MuscleCol, x$Group.Number)), simulate.p.value = T)
+chisq.test(print(table(x$MuscleCol, x$Group.Number)))
+sum(print(table(x$MuscleCol, x$Group.Number)))
+
+x <- d.sum[is.element(d.sum$Group.Number,c(1:8)),]
+x <- x[x$IsMated & x$IsEggComplete & x$EventDay==36 & x$EventType=="C" , ]
+fisher.test(print(table(x$MuscleCol, x$Group.Number)), simulate.p.value = T)
+chisq.test(print(table(x$MuscleCol, x$Group.Number)))
+sum(print(table(x$MuscleCol, x$Group.Number)))
+
+x <- d.sum[is.element(d.sum$Group.Number,c(7:8)),]
+x <- x[x$IsMated & x$IsEggComplete & x$EventDay==36 & x$EventType=="C" , ]
+fisher.test(print(table(x$MuscleCol, x$Group.Number)), simulate.p.value = T)
+chisq.test(print(table(x$MuscleCol, x$Group.Number)))
+sum(print(table(x$MuscleCol, x$Group.Number)))
+
+```
+
+
+
+## Gene Expressions
+```{r}
+par(mfrow=c(2,2))
+shapiro.test(2^(-cqsum$DN43530.nor))
+shapiro.test(2^(-cqsum$DN48887.nor))
+shapiro.test(2^(-cqsum$DN46820.nor))
+shapiro.test(2^(-cqsum$Vtg1.nor))
+beeswarm(2^(-DN43530.nor)/max(2^(-cqsum$DN43530.nor)) ~ Tissue, data = cqsum, pch=19, col="#000000aa", ylab="PO(DN43530)", las=1)
+  means <- tapply (2^(-cqsum$DN43530.nor)/max(2^(-cqsum$DN43530.nor)), cqsum$Tissue, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+boxplot(2^(-DN43530.nor)/max(2^(-cqsum$DN43530.nor)) ~ Tissue, data = cqsum, pch=19, ylab="PO(DN43530)", las=1, outline=T)
+  wilcox.test(DN43530.nor~ Tissue, data=cqsum)
+  res1 <- glm(2^(-DN43530.nor) ~ Tissue, data = cqsum, family = Gamma(link="log"))
+  res2 <- glm(2^(-DN43530.nor) ~ 1     , data = cqsum, family = Gamma(link="log"))
+  AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+beeswarm(2^(-DN48887.nor)/max(2^(-cqsum$DN48887.nor)) ~ Tissue, data = cqsum, pch=19, col="#000000aa", ylab="PO(DN48887)", las=1 )
+  means <- tapply (2^(-cqsum$DN48887.nor)/max(2^(-cqsum$DN48887.nor)), cqsum$Tissue, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+boxplot(2^(-DN48887.nor)/max(2^(-cqsum$DN48887.nor)) ~ Tissue, data = cqsum, pch=19, ylab="PO(DN48887)", las=1, outline=T)
+  wilcox.test(DN48887.nor~ Tissue, data=cqsum)
+  res1 <- glm(2^(-DN48887.nor) ~ Tissue, data = cqsum, family = Gamma(link="log"))
+  res2 <- glm(2^(-DN48887.nor) ~ 1     , data = cqsum, family = Gamma(link="log"))
+  AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+  summary(res1)
+beeswarm(2^(-DN46820.nor)/max(2^(-cqsum$DN46820.nor)) ~ Tissue, data = cqsum, pch=19, col="#000000aa", ylab="PO(DN46820)", las=1 )
+  means <- tapply (2^(-cqsum$DN46820.nor)/max(2^(-cqsum$DN46820.nor)), cqsum$Tissue, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+boxplot(2^(-DN46820.nor)/max(2^(-cqsum$DN46820.nor)) ~ Tissue, data = cqsum, pch=19, ylab="PO(DN46820)", las=1, outline=T)
+  wilcox.test(DN46820.nor~ Tissue, data=cqsum)
+  res1 <- glm(2^(-DN46820.nor) ~ Tissue, data = cqsum, family = Gamma(link="log"))
+  res2 <- glm(2^(-DN46820.nor) ~ 1     , data = cqsum, family = Gamma(link="log"))
+  AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+  summary(res1)
+beeswarm(2^(-Vtg1.nor)/max(2^(-cqsum$Vtg1.nor)) ~ Tissue, data = cqsum , pch=19, col="#000000aa", ylab="Vtg1", las=1)
+  means <- tapply (2^(-cqsum$Vtg1.nor)/max(2^(-cqsum$Vtg1.nor)), cqsum$Tissue, mean, na.rm=T)
+  for (i in 1:3){segments (i-.2, means[i], i+.2, means[i], lwd=3, col="red")}
+boxplot(2^(-Vtg1.nor)/max(2^(-cqsum$Vtg1.nor)) ~ Tissue, data = cqsum, pch=19, ylab="Vtg1", las=1, outline=T)
+  wilcox.test(Vtg1.nor~ Tissue, data=cqsum)
+    res1 <- glm(2^(-Vtg1.nor) ~ Tissue, data = cqsum, family = Gamma(link="log"))
+  res2 <- glm(2^(-Vtg1.nor) ~ 1     , data = cqsum, family = Gamma(link="log"))
+  AIC(res1); AIC(res2); AIC(res1)- AIC(res2)
+  summary(res1)
+
+```
